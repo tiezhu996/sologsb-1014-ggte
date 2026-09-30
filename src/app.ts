@@ -84,6 +84,23 @@ function exportLatex(document: ProofDocument): string {
   return lines.join('\n');
 }
 
+/** 合并面板：按文档把待处理项分组展示。 */
+function groupedConflicts(report: NonNullable<ProofStore['pendingMerge']>): [string, string, NonNullable<ProofStore['pendingMerge']>['conflicts']][] {
+  const groups = new Map<string, NonNullable<ProofStore['pendingMerge']>['conflicts']>();
+  for (const conflict of report.conflicts) {
+    const list = groups.get(conflict.docId) ?? [];
+    list.push(conflict);
+    groups.set(conflict.docId, list);
+  }
+  return [...groups.entries()].map(([docId, conflicts]) => [docId, conflicts[0]?.docTitle ?? '未命名证明', conflicts]);
+}
+
+function conflictHeading(kind: string, fieldLabel?: string): string {
+  if (kind === 'step-existence') return '步骤存在冲突：一边删除，另一边修改';
+  if (kind === 'doc-existence') return '文档存在冲突：一边删除，另一边修改';
+  return `同一步骤的${fieldLabel ?? '内容'}两边不一致`;
+}
+
 export class ProofApp implements Component {
   private readonly onKeyDown = (event: KeyboardEvent) => {
     const target = event.target as HTMLElement;
@@ -110,7 +127,7 @@ export class ProofApp implements Component {
     if (command && event.key.toLowerCase() === 's') {
       event.preventDefault();
       store.save();
-      store.notify('已保存到浏览器');
+      store.notify(store.syncMode === 'offline' ? '离线改动已保存在本标签本地稿' : '已保存到浏览器');
       m.redraw();
       return;
     }
@@ -158,6 +175,22 @@ export class ProofApp implements Component {
           m('span.status-dot', { class: errors ? 'has-error' : 'is-ok' }),
           errors ? `${errors} 个结构错误` : '证明结构可检查',
           m('span.topbar-separator'),
+          m('span.sync-chip', {
+            class: store.syncMode,
+            title: store.online ? '本标签与其他标签通过共享基线同步' : '当前断网：改动只保存在本标签本地稿',
+          }, store.syncMode === 'offline'
+            ? '● 离线 · 仅本地稿'
+            : store.syncMode === 'waiting'
+              ? `● 等待 ${store.mergerLabel} 合并`
+              : store.syncMode === 'merging'
+                ? '● 合并待处理项'
+                : '● 已连接'),
+          m('span.tab-badge', store.tabLabel),
+          m('button.button.is-small.is-light.link-toggle', {
+            onclick: () => store.setSimulatedOnline(!store.online),
+            title: '模拟断网 / 恢复，用于核对多标签合并',
+          }, store.online ? '模拟断网' : '模拟恢复联网'),
+          m('span.topbar-separator'),
           `自动保存于 ${new Date(document.updatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`,
         ]),
         m('div.actions', [
@@ -165,6 +198,14 @@ export class ProofApp implements Component {
           m('button.button.is-light', { onclick: () => { store.redo(); m.redraw(); }, disabled: !store.redoStack.length, title: '重做 Ctrl+Y' }, '↷ 重做'),
           m('button.button.is-link', { onclick: () => { store.addStep('derivation'); m.redraw(); }, title: '添加步骤 Ctrl+Enter' }, '+ 添加步骤'),
         ]),
+      ]),
+      store.syncMode === 'offline' && m('div.sync-banner.is-offline', [
+        m('strong', `${store.tabLabel} 处于离线状态：`),
+        '所有改动只保存在本标签本地稿，不会覆盖其他标签；恢复联网后将与其他标签按步骤合并。',
+      ]),
+      store.syncMode === 'waiting' && m('div.sync-banner is-waiting', [
+        m('strong', `${store.mergerLabel} 正在合并各标签本地稿：`),
+        '本标签暂停编辑，合并稿发布后自动载入。',
       ]),
       m('main.workspace', [
         m('aside.left-rail', [
@@ -189,7 +230,7 @@ export class ProofApp implements Component {
               m('span', version.name),
               m('small', new Date(version.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })),
             ]))),
-            m('button.button.is-fullwidth.is-small', { onclick: () => { store.createVersion(); m.redraw(); } }, '＋ 保存当前版本'),
+            m('button.button.is-fullwidth.is-small', { disabled: store.blocked, title: store.blocked ? '合并完成后才能保存版本快照' : '保存当前合并稿快照', onclick: () => { store.createVersion(); m.redraw(); } }, '＋ 保存当前版本'),
           ]),
           m('section.check-summary', [
             m('div.check-summary-head', [
@@ -209,8 +250,8 @@ export class ProofApp implements Component {
               m('div.editor-meta', [`${document.author} · ${document.steps.length} 个步骤`, m('span.keyboard-hint', '拖动 ⠿ 排序')]),
             ]),
             m('div.export-actions', [
-              m('button.button.is-small', { onclick: () => download(`${document.title}.md`, exportMarkdown(document), 'text/markdown;charset=utf-8') }, '导出 Markdown'),
-              m('button.button.is-small', { onclick: () => download(`${document.title}.tex`, exportLatex(document), 'application/x-tex;charset=utf-8') }, '导出 LaTeX'),
+              m('button.button.is-small', { disabled: store.blocked, title: store.blocked ? '合并完成后才能导出合并稿' : '导出 Markdown', onclick: () => download(`${document.title}.md`, exportMarkdown(document), 'text/markdown;charset=utf-8') }, '导出 Markdown'),
+              m('button.button.is-small', { disabled: store.blocked, title: store.blocked ? '合并完成后才能导出合并稿' : '导出 LaTeX', onclick: () => download(`${document.title}.tex`, exportLatex(document), 'application/x-tex;charset=utf-8') }, '导出 LaTeX'),
             ]),
           ]),
           m('section.goal-card', [
@@ -373,6 +414,58 @@ export class ProofApp implements Component {
               m('span', item.before || '—'),
               m('span', item.after || '—'),
             ])),
+          ]),
+        ]),
+      ]),
+      store.pendingMerge && m('div.diff-overlay.merge-overlay', [
+        m('section.diff-dialog.merge-dialog', [
+          m('header.diff-head', [
+            m('div', [
+              m('span.eyebrow', 'MERGE LOCAL DRAFTS'),
+              m('h2', `合并 ${store.tabLabel} 与其他标签的本地稿`),
+            ]),
+            m('span.merge-progress', `${store.pendingMerge.conflicts.filter((item) => item.chosen !== undefined).length} / ${store.pendingMerge.conflicts.length} 已处理`),
+          ]),
+          m('div.diff-summary', [
+            m('span.tag.is-warning', `${store.pendingMerge.conflicts.length} 项待处理`),
+            m('span.tag.is-info', `合并了 ${store.pendingMerge.sides.length} 份本地稿`),
+            store.allConflictsResolved && m('span.tag.is-success', '全部已选定，可以生成合并稿'),
+          ]),
+          m('div.merge-body', [
+            m('p.merge-hint', [
+              '不同步骤的新增与修改已全部保留。同一步骤的',
+              m('strong', '结论、推理规则、依据'),
+              '两边不一致时，请选择要保留的一方；选择完成前，编辑、版本快照和导出都将暂停。',
+            ]),
+            ...groupedConflicts(store.pendingMerge).map(([, docTitle, conflicts]) => m('div.merge-doc', [
+              m('div.merge-doc-title', `《${docTitle}》`),
+              ...conflicts.map((conflict) => m('div.conflict-card', { class: conflict.chosen !== undefined ? 'is-resolved' : '' }, [
+                m('div.conflict-head', [
+                  m('strong', conflict.stepTitle ? conflictHeading(conflict.kind, conflict.fieldLabel) : conflictHeading(conflict.kind)),
+                  conflict.stepTitle && m('small', conflict.stepTitle),
+                ]),
+                conflict.kind !== 'field' && m('div.conflict-base', [m('span', '情况'), conflict.baseText]),
+                conflict.kind === 'field' && m('div.conflict-base', [m('span', '共同基线'), renderRichText(conflict.baseText)]),
+                ...conflict.options.map((option, optionIndex) => m('button.conflict-option', {
+                  class: conflict.chosen === optionIndex ? 'is-chosen' : '',
+                  onclick: () => { store.resolveConflict(conflict.id, optionIndex); m.redraw(); },
+                }, [
+                  m('span.conflict-side', option.side),
+                  m('span.conflict-text', conflict.field === 'references' || conflict.field === 'rule' ? option.text : renderRichText(option.text)),
+                ])),
+              ])),
+            ])),
+            store.pendingMerge.notices.length > 0 && m('div.merge-notices', [
+              m('strong', '自动合并说明'),
+              ...store.pendingMerge.notices.map((notice) => m('p', notice)),
+            ]),
+          ]),
+          m('div.merge-foot', [
+            m('span', store.allConflictsResolved ? '所有不一致均已由老师选定。' : '还有未处理项，无法继续。'),
+            m('button.button.is-link', {
+              disabled: !store.allConflictsResolved,
+              onclick: () => { store.confirmMerge(); m.redraw(); },
+            }, '生成合并稿'),
           ]),
         ]),
       ]),

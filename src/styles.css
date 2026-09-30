@@ -201,6 +201,41 @@ kbd { padding: 2px 5px; border: 1px solid #c8d1da; border-bottom-width: 2px; bor
 .diff-label { color: #657385; background: #fafbfc; }
 .toast-notification { position: fixed; right: 24px; bottom: 24px; z-index: 80; padding: 11px 16px; border-radius: 9px; color: #fff; background: #173f60; box-shadow: 0 10px 30px rgba(17,47,70,.25); font-size: 12px; }
 
+/* 多标签同步状态 */
+.sync-chip { padding: 3px 9px; border-radius: 99px; font-size: 11px; background: rgba(101,211,165,.18); color: #9ff0d2; }
+.sync-chip.offline { background: rgba(255,167,91,.2); color: #ffd3a8; }
+.sync-chip.waiting { background: rgba(255,214,102,.2); color: #ffe8a3; }
+.sync-chip.merging { background: rgba(255,143,157,.22); color: #ffc2ca; }
+.tab-badge { padding: 2px 8px; border-radius: 6px; background: rgba(255,255,255,.13); font-size: 10px; letter-spacing: .05em; }
+.link-toggle { height: 26px !important; font-size: 10px; }
+.sync-banner { padding: 9px 22px; font-size: 12px; }
+.sync-banner strong { margin-right: 6px; }
+.sync-banner.is-offline { color: #8a5a1d; background: #fff0db; border-bottom: 1px solid #f2d9b5; }
+.sync-banner.is-waiting { color: #6e530f; background: #fff7df; border-bottom: 1px solid #eedfae; }
+
+/* 合并待处理项面板 */
+.merge-overlay { z-index: 60; }
+.merge-dialog { width: min(900px, 96vw); }
+.merge-progress { color: var(--blue); font-size: 12px; font-weight: 700; }
+.merge-body { padding: 14px 20px; overflow: auto; display: grid; gap: 12px; }
+.merge-hint { margin: 0; font-size: 12px; line-height: 1.7; color: #596778; background: #f4f8fc; border-radius: 9px; padding: 9px 12px; }
+.merge-doc { display: grid; gap: 8px; }
+.merge-doc-title { font-size: 13px; font-weight: 700; color: var(--navy); padding-bottom: 4px; border-bottom: 1px solid #e7edf3; }
+.conflict-card { border: 1px solid #ead7b8; border-radius: 11px; overflow: hidden; background: #fffdf8; }
+.conflict-card.is-resolved { border-color: #bfe3d3; background: #f7fdfa; }
+.conflict-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 9px 12px; background: #fff7e8; font-size: 12px; color: #8a5a1d; }
+.conflict-card.is-resolved .conflict-head { background: #eef9f3; color: #23634a; }
+.conflict-head small { color: var(--muted); font-weight: 400; }
+.conflict-base { display: flex; gap: 10px; align-items: baseline; padding: 8px 12px; font-size: 11px; color: var(--muted); border-bottom: 1px dashed #f0e4cd; }
+.conflict-base span { flex: none; padding: 1px 7px; border-radius: 5px; background: #eef1f5; color: #667384; }
+.conflict-option { width: 100%; display: grid; grid-template-columns: 64px 1fr; gap: 10px; align-items: baseline; text-align: left; padding: 9px 12px; border: 0; border-top: 1px solid #f3e9d6; background: transparent; cursor: pointer; }
+.conflict-option:hover { background: #fff9ee; }
+.conflict-option.is-chosen { background: #e8f7f0; box-shadow: inset 3px 0 #2e9a6d; }
+.conflict-side { color: var(--blue); font-size: 11px; font-weight: 700; }
+.conflict-text { font-size: 13px; color: var(--ink); font-family: "Times New Roman", "Noto Serif SC", serif; }
+.merge-notices { border-top: 1px dashed var(--line); padding-top: 9px; display: grid; gap: 4px; font-size: 11px; color: var(--muted); }
+.merge-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 13px 20px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+
 @media (max-width: 1220px) {
   .workspace { grid-template-columns: 210px minmax(470px, 1fr); }
   .right-rail { grid-column: 1 / -1; position: static; grid-template-columns: repeat(3, 1fr); }

@@ -1,7 +1,8 @@
 import { redraw } from 'mithril';
+import { SyncHub } from './sync';
+import type { MergeReport, SyncMode } from './sync';
 import type { ProofCheck, ProofDocument, ProofStep, ProofVersion } from './types';
 
-const STORAGE_KEY = 'sologsb-1014-proof-workspace-v1';
 const uid = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 const clone = <T>(value: T): T => structuredClone(value);
 
@@ -26,7 +27,7 @@ function issueSteps(): ProofStep[] {
   ];
 }
 
-function initialDocuments(): ProofDocument[] {
+export function initialDocuments(): ProofDocument[] {
   const now = new Date().toISOString();
   return [
     {
@@ -52,19 +53,16 @@ function initialDocuments(): ProofDocument[] {
   ];
 }
 
-function loadDocuments(): ProofDocument[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return initialDocuments();
-    const parsed = JSON.parse(raw) as ProofDocument[];
-    return Array.isArray(parsed) && parsed.length ? parsed : initialDocuments();
-  } catch {
-    return initialDocuments();
-  }
-}
-
 export class ProofStore {
-  documents = loadDocuments();
+  private hub = new SyncHub(
+    {
+      onRemoteDocuments: (documents) => this.applyRemoteDocuments(documents),
+      onSyncStateChange: () => redraw(),
+    },
+    () => initialDocuments(),
+  );
+
+  documents: ProofDocument[] = this.hub.base.documents;
   activeId = this.documents[0]?.id ?? '';
   selectedStepId = this.documents[0]?.steps[0]?.id ?? '';
   compareVersionId = '';
@@ -87,35 +85,103 @@ export class ProofStore {
     return validate(this.current);
   }
 
-  save(): void {
+  // -- 多标签同步状态 ------------------------------------------------------
+
+  get syncMode(): SyncMode {
+    return this.hub.mode;
+  }
+
+  get tabLabel(): string {
+    return this.hub.label;
+  }
+
+  get online(): boolean {
+    return this.hub.online;
+  }
+
+  /** 等待合并或正在处理待处理项时，编辑、快照与导出都暂停。 */
+  get blocked(): boolean {
+    return this.hub.mode === 'waiting' || this.hub.mode === 'merging';
+  }
+
+  get pendingMerge(): MergeReport | null {
+    return this.hub.pending;
+  }
+
+  get mergerLabel(): string {
+    return this.hub.mergerLabel;
+  }
+
+  get allConflictsResolved(): boolean {
+    return this.hub.allConflictsResolved;
+  }
+
+  setSimulatedOnline(value: boolean): void {
+    this.hub.setSimulatedOnline(value);
+  }
+
+  resolveConflict(conflictId: string, optionIndex: number): void {
+    this.hub.resolveConflict(conflictId, optionIndex);
+  }
+
+  confirmMerge(): void {
+    this.hub.confirmMerge();
+  }
+
+  private rejectMutation(): boolean {
+    if (!this.blocked) return false;
+    this.notify(this.hub.mode === 'merging' ? '请先在合并面板中处理全部待处理项。' : `${this.hub.mergerLabel}正在合并，请稍候。`);
+    return true;
+  }
+
+  // -- 持久化 --------------------------------------------------------------
+
+  private persist(): void {
     this.current.updatedAt = new Date().toISOString();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(this.documents));
+    this.hub.localChanged(this.documents);
+  }
+
+  save(): void {
+    this.hub.saveNow(this.documents);
+  }
+
+  private applyRemoteDocuments(documents: ProofDocument[]): void {
+    this.documents = documents;
+    this.undoStack = [];
+    this.redoStack = [];
+    this.ensureSelection();
+    redraw();
   }
 
   update(mutator: (document: ProofDocument) => void): void {
+    if (this.rejectMutation()) return;
     this.undoStack.push(clone(this.documents));
     if (this.undoStack.length > 80) this.undoStack.shift();
     this.redoStack = [];
     mutator(this.current);
-    this.save();
+    this.persist();
   }
 
   undo(): void {
+    if (this.rejectMutation()) return;
     const previous = this.undoStack.pop();
     if (!previous) return;
     this.redoStack.push(clone(this.documents));
     this.documents = previous;
     this.ensureSelection();
-    this.save();
+    this.current.updatedAt = new Date().toISOString();
+    this.hub.localChanged(this.documents);
   }
 
   redo(): void {
+    if (this.rejectMutation()) return;
     const next = this.redoStack.pop();
     if (!next) return;
     this.undoStack.push(clone(this.documents));
     this.documents = next;
     this.ensureSelection();
-    this.save();
+    this.current.updatedAt = new Date().toISOString();
+    this.hub.localChanged(this.documents);
   }
 
   selectDocument(id: string): void {
@@ -136,6 +202,7 @@ export class ProofStore {
   }
 
   addDocument(): void {
+    if (this.rejectMutation()) return;
     const id = uid('doc');
     const document: ProofDocument = {
       id,
@@ -148,24 +215,28 @@ export class ProofStore {
       updatedAt: new Date().toISOString(),
     };
     this.undoStack.push(clone(this.documents));
+    this.redoStack = [];
     this.documents.unshift(document);
     this.activeId = id;
     this.selectedStepId = document.steps[0].id;
-    this.save();
+    this.hub.localChanged(this.documents);
   }
 
   removeDocument(id: string): void {
+    if (this.rejectMutation()) return;
     if (this.documents.length <= 1) {
       this.notify('至少保留一个证明文档');
       return;
     }
     this.undoStack.push(clone(this.documents));
+    this.redoStack = [];
     this.documents = this.documents.filter((item) => item.id !== id);
     this.ensureSelection();
-    this.save();
+    this.hub.localChanged(this.documents);
   }
 
   addStep(type: ProofStep['type'] = 'derivation'): void {
+    if (this.rejectMutation()) return;
     const step: ProofStep = {
       id: uid('step'),
       type,
@@ -176,25 +247,29 @@ export class ProofStore {
       counterexample: '',
       alternative: '',
     };
-    this.update((document) => {
-      const selectedIndex = document.steps.findIndex((item) => item.id === this.selectedStepId);
-      document.steps.splice(type === 'goal' ? document.steps.length : selectedIndex + 1, 0, step);
-    });
+    this.undoStack.push(clone(this.documents));
+    this.redoStack = [];
+    const selectedIndex = this.current.steps.findIndex((item) => item.id === this.selectedStepId);
+    this.current.steps.splice(type === 'goal' ? this.current.steps.length : selectedIndex + 1, 0, step);
     this.selectedStepId = step.id;
+    this.persist();
   }
 
   removeStep(id: string): void {
-    this.update((document) => {
-      document.steps = document.steps.filter((step) => step.id !== id);
-      document.steps.forEach((step) => {
-        step.references = step.references.filter((reference) => reference !== id);
-      });
+    if (this.rejectMutation()) return;
+    this.undoStack.push(clone(this.documents));
+    this.redoStack = [];
+    this.current.steps = this.current.steps.filter((step) => step.id !== id);
+    this.current.steps.forEach((step) => {
+      step.references = step.references.filter((reference) => reference !== id);
     });
     this.ensureSelection();
+    this.persist();
   }
 
   moveStep(sourceId: string, targetId: string): void {
     if (sourceId === targetId) return;
+    if (this.rejectMutation()) return;
     this.update((document) => {
       const from = document.steps.findIndex((step) => step.id === sourceId);
       const to = document.steps.findIndex((step) => step.id === targetId);
@@ -213,6 +288,7 @@ export class ProofStore {
   }
 
   createVersion(): void {
+    if (this.rejectMutation()) return;
     this.update((document) => {
       const version: ProofVersion = {
         id: uid('version'),
