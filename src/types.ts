@@ -45,3 +45,48 @@ export interface ProofDiff {
   before: string;
   after: string;
 }
+
+export type MergeConflictField = 'statement' | 'rule' | 'references';
+
+export interface MergeConflict {
+  id: string;
+  docId: string;
+  stepId: string;
+  field: MergeConflictField;
+  localTab: string;
+  peerTab: string;
+  /** 统一成字符串数组：命题/规则只放一项，依据为步骤 id 列表 */
+  baseValue: string[];
+  localValue: string[];
+  peerValue: string[];
+  choice: 'local' | 'peer' | null;
+}
+
+export interface MergeReport {
+  docId: string;
+  title: string;
+  addedLocal: string[];
+  addedPeer: string[];
+  removed: string[];
+  restored: string[];
+  prunedReferences: { stepId: string; reference: string }[];
+  notes: string[];
+}
+
+export interface MergeResult {
+  merged: ProofDocument[];
+  conflicts: MergeConflict[];
+  reports: MergeReport[];
+}
+
+export interface PendingMerge {
+  sessionId: string;
+  ownerTabId: string;
+  localTabName: string;
+  baseRev: number;
+  createdAt: string;
+  consumedPeers: string[];
+  merged: ProofDocument[];
+  conflicts: MergeConflict[];
+  reports: MergeReport[];
+}
